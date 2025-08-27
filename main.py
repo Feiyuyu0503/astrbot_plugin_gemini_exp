@@ -10,6 +10,8 @@ from io import BytesIO
 import time
 import tempfile
 import os
+import base64
+import aiohttp
 from google import genai  # 修改为正确的导入方式
 from google.genai import types
 from PIL import Image as PILImage
@@ -29,6 +31,7 @@ class GeminiExpPlugin(Star):
         self.waiting_users = {}  # 存储正在等待输入的用户 {user_id: {"expiry_time": time, "text_content": "", "image_list": []}}
         self.temp_dir = tempfile.mkdtemp(prefix="gemini_exp_")
         self.is_translating = config.get("translate", False)
+        self.request_format = config.get("request_format", "gemini")
         
         # 检查并安装必要的包
         if not self._check_packages():
@@ -221,7 +224,10 @@ class GeminiExpPlugin(Star):
         
         # 10. 调用API和处理结果
         try:
-            result = await self.process_with_gemini(text_content, image_list)
+            if self.request_format == "gemini":
+                result = await self.process_with_gemini(text_content, image_list)
+            elif self.request_format == "openai":
+                result = await self.process_with_openai(text_content, image_list)
             text_response = result.get('text', '无文本回复')
             image_paths = result.get('image_paths', [])
             
@@ -400,6 +406,94 @@ class GeminiExpPlugin(Star):
         except Exception as e:
             logger.error(f"Gemini API处理失败: {str(e)}")
             raise e
+    
+    async def process_with_openai(self, text, images):
+        """处理图片和文本，调用OpenAI API"""
+        try:
+            # 准备结果字典
+            result = {'text': '', 'image_paths': []}
+            
+            # 检查输入
+            if not text or not images:
+                raise ValueError("缺少文本或图片输入")
+            
+            # 处理图片为base64格式
+            image_contents = []
+            for img in images:
+                # 将PIL Image转换为base64
+                img_buffer = BytesIO()
+                img.save(img_buffer, format="PNG")
+                image_base64 = base64.b64encode(img_buffer.getvalue()).decode()
+                
+                image_contents.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{image_base64}"
+                    }
+                })
+            
+            # 准备payload
+            payload = {
+                "model": self.model,  # 使用配置的模型名称
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": text},
+                            *image_contents  # 展开所有图片内容
+                        ]
+                    }
+                ]
+            }
+            
+            # 调用API
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        raise ValueError(f"API请求失败: {response.status} - {error_text}")
+                    
+                    response_data = await response.json()
+                    
+                    # 检查响应格式
+                    if not response_data.get("choices"):
+                        raise ValueError("API返回的数据格式不正确")
+                    
+                    # 获取文本响应
+                    text_response = response_data["choices"][0]["message"]["content"]
+                    result["text"] = text_response
+                    
+                    # 从响应中提取图片数据
+                    message = response_data["choices"][0]["message"]
+                    if "images" in message and message["images"]:
+                        for i, img_data in enumerate(message["images"]):
+                            if img_data["type"] == "image_url" and "image_url" in img_data:
+                                # 获取base64图片数据
+                                img_url = img_data["image_url"]["url"]
+                                if img_url.startswith("data:image/"):
+                                    # 解析base64数据
+                                    _, base64_data = img_url.split(",", 1)
+                                    img_content = base64.b64decode(base64_data)
+                                    
+                                    # 保存图片
+                                    temp_file_path = os.path.join(self.temp_dir, f"openai_result_{time.time()}_{i}.png")
+                                    with open(temp_file_path, "wb") as f:
+                                        f.write(img_content)
+                                    result["image_paths"].append(temp_file_path)
+            return result
+        except Exception as e:
+            logger.error(f"OpenAI API处理失败: {str(e)}")
+            raise e
+
 
     async def terminate(self):
         '''插件被卸载/停用时调用'''
