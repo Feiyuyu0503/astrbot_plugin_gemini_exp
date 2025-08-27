@@ -469,8 +469,8 @@ class GeminiExpPlugin(Star):
                         raise ValueError("API返回的数据格式不正确")
                     
                     # 获取文本响应
-                    text_response = response_data["choices"][0]["message"]["content"]
-                    result["text"] = text_response
+                    content = response_data["choices"][0]["message"]["content"]
+                    result["text"] = "生成完毕~" if content.startswith("![image](data:image/png;base64,") else content
                     
                     # 从响应中提取图片数据
                     message = response_data["choices"][0]["message"]
@@ -483,12 +483,21 @@ class GeminiExpPlugin(Star):
                                     # 解析base64数据
                                     _, base64_data = img_url.split(",", 1)
                                     img_content = base64.b64decode(base64_data)
-                                    
                                     # 保存图片
                                     temp_file_path = os.path.join(self.temp_dir, f"openai_result_{time.time()}_{i}.png")
                                     with open(temp_file_path, "wb") as f:
                                         f.write(img_content)
                                     result["image_paths"].append(temp_file_path)
+                    # 兼容部分API直接在content里返回base64
+                    elif isinstance(content, str) and content.startswith("![image](data:image/png;base64,"):
+                        base64_part = content.split(",", 1)[-1]
+                        img_content = base64.b64decode(base64_part)
+                        # 保存图片
+                        temp_file_path = os.path.join(self.temp_dir, f"openai_result_{time.time()}_{i}.png")
+                        with open(temp_file_path, "wb") as f:
+                            f.write(img_content)
+                        result["image_paths"].append(temp_file_path)
+
             return result
         except Exception as e:
             logger.error(f"OpenAI API处理失败: {str(e)}")
