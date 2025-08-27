@@ -493,7 +493,7 @@ class GeminiExpPlugin(Star):
                         base64_part = content.split(",", 1)[-1]
                         img_content = base64.b64decode(base64_part)
                         # 保存图片
-                        temp_file_path = os.path.join(self.temp_dir, f"openai_result_{time.time()}_{i}.png")
+                        temp_file_path = os.path.join(self.temp_dir, f"openai_result_{time.time()}.png")
                         with open(temp_file_path, "wb") as f:
                             f.write(img_content)
                         result["image_paths"].append(temp_file_path)
