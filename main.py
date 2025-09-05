@@ -488,16 +488,33 @@ class GeminiExpPlugin(Star):
                                     with open(temp_file_path, "wb") as f:
                                         f.write(img_content)
                                     result["image_paths"].append(temp_file_path)
-                    # 兼容部分API直接在content里返回base64
-                    elif isinstance(content, str) and content.startswith("![image](data:image/png;base64,"):
-                        base64_part = content.split(",", 1)[-1]
-                        img_content = base64.b64decode(base64_part)
-                        # 保存图片
-                        temp_file_path = os.path.join(self.temp_dir, f"openai_result_{time.time()}.png")
-                        with open(temp_file_path, "wb") as f:
-                            f.write(img_content)
-                        result["image_paths"].append(temp_file_path)
-
+                    # 从content中提取图片数据
+                    elif isinstance(content, str) and '![image](' in content:
+                        # 提取markdown中的图片数据
+                        start_idx = content.find('![image](') + len('![image](')
+                        end_idx = content.find(')', start_idx)
+                        if end_idx > start_idx:
+                            image_data = content[start_idx:end_idx].strip()
+                            # 判断是base64还是URL
+                            if image_data.startswith('data:image/'):
+                                # 处理base64格式
+                                base64_part = image_data.split(',', 1)[-1]
+                                img_content = base64.b64decode(base64_part)
+                                # 保存图片
+                                temp_file_path = os.path.join(self.temp_dir, f"openai_result_{time.time()}.png")
+                                with open(temp_file_path, "wb") as f:
+                                    f.write(img_content)
+                                result["image_paths"].append(temp_file_path)
+                            elif image_data.startswith('http'):
+                                # 处理URL格式
+                                async with session.get(image_data) as img_response:
+                                    if img_response.status == 200:
+                                        img_content = await img_response.read()
+                                        # 保存图片
+                                        temp_file_path = os.path.join(self.temp_dir, f"openai_result_{time.time()}.png")
+                                        with open(temp_file_path, "wb") as f:
+                                            f.write(img_content)
+                                        result["image_paths"].append(temp_file_path)
             return result
         except Exception as e:
             logger.error(f"OpenAI API处理失败: {str(e)}")
